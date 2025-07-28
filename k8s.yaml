@@ -1,0 +1,213 @@
+# Namespace for all our resources
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: canine
+---
+# Secrets for postgres
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: canine
+type: Opaque
+data:
+  # base64 encoded "pg_rand_pass"
+  POSTGRES_PASSWORD: cGdfcmFuZF9wYXNz
+---
+# Secrets for canine-web
+apiVersion: v1
+kind: Secret
+metadata:
+  name: canine-secret
+  namespace: canine
+type: Opaque
+data:
+  # base64 encoded "admin"
+  CANINE_USERNAME: YWRtaW4=
+  # base64 encoded "canine_rand_pass"
+  CANINE_PASSWORD: Y2FuaW5lX3JhbmRfcGFzcw==
+  # base64 encoded "a38fcb39d60f9d146d2a0053a25024b9"
+  SECRET_KEY_BASE: YTM4ZmNiMzlkNjBmOWQxNDZkMmEwMDUzYTI1MDI0Yjk=
+  # base64 encoded "postgres://postgres:pg_rand_pass@postgres:5432"
+  DATABASE_URL: cG9zdGdyZXM6Ly9wb3N0Z3JlczpwZ19yYW5kX3Bhc3NAcG9zdGdyZXM6NTQzMg==
+---
+# Persistent Volume for Postgres
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: canine
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Postgres Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-deployment
+  namespace: canine
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_MULTIPLE_DATABASES
+          value: "canine_production,canine_development"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+---
+# Postgres Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: canine
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-deployment
+  namespace: canine
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:alpine
+        ports:
+        - containerPort: 6379
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: canine
+spec:
+  selector:
+    app: redis
+  ports:
+    - protocol: TCP
+      port: 6379
+      targetPort: 6379
+---
+# Canine Web Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canine-web-deployment
+  namespace: canine
+  labels:
+    app: canine-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: canine-web
+  template:
+    metadata:
+      labels:
+        app: canine-web
+    spec:
+      containers:
+      - name: canine-web
+        image: chriszhu12/canine
+        ports:
+        - containerPort: 3000
+        - containerPort: 3200
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: canine-secret
+              key: DATABASE_URL
+        - name: REDIS_URL
+          value: "redis://redis:6379"
+        - name: PORT
+          value: "3000"
+        - name: CANINE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: canine-secret
+              key: CANINE_USERNAME
+        - name: CANINE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: canine-secret
+              key: CANINE_PASSWORD
+        - name: LOCAL_MODE
+          value: "true"
+        - name: SECRET_KEY_BASE
+          valueFrom:
+            secretKeyRef:
+              name: canine-secret
+              key: SECRET_KEY_BASE
+        - name: APP_HOST
+          value: "http://localhost:3000"
+---
+# Canine Web Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: canine-web
+  namespace: canine
+spec:
+  type: LoadBalancer
+  selector:
+    app: canine-web
+  ports:
+    - name: http
+      protocol: TCP
+      port: 3000
+      targetPort: 3000
+    - name: other
+      protocol: TCP
+      port: 3200
+      targetPort: 3200
